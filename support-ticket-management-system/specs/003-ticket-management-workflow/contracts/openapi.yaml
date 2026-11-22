@@ -1,0 +1,369 @@
+openapi: 3.0.3
+info:
+  title: Support Ticket Management API
+  version: 1.0.0
+  description: >
+    Contract for feature 003 (ticket management with status workflow). Every operation that
+    accepts a status routes through the same transition rules. Allowed transitions: OPEN to
+    IN_PROGRESS, IN_PROGRESS to RESOLVED, RESOLVED to CLOSED, OPEN to CANCELLED, IN_PROGRESS to
+    CANCELLED. CLOSED and CANCELLED are final.
+servers:
+  - url: /api/v1
+paths:
+  /tickets:
+    get:
+      summary: List tickets (newest first), optionally filtered by status and keyword
+      operationId: listTickets
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/TicketStatus'
+        - name: q
+          in: query
+          required: false
+          description: Case-insensitive keyword matched against title and description. Plain text only.
+          schema: { type: string, maxLength: 100 }
+        - name: page
+          in: query
+          schema: { type: integer, minimum: 0, default: 0 }
+        - name: size
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+      responses:
+        '200':
+          description: A page of ticket summaries
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TicketPage'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+    post:
+      summary: Create a ticket. Status is always OPEN; any supplied status is ignored.
+      operationId: createTicket
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTicketRequest'
+      responses:
+        '201':
+          description: Created
+          headers:
+            Location:
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TicketDetail'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+  /tickets/{id}:
+    parameters:
+      - $ref: '#/components/parameters/TicketId'
+    get:
+      summary: Get ticket details including comments and allowed next statuses
+      operationId: getTicket
+      responses:
+        '200':
+          description: Ticket details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TicketDetail'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      summary: Update title, description, priority and assignee (optionally status)
+      operationId: updateTicket
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateTicketRequest'
+      responses:
+        '200':
+          description: Updated ticket
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TicketDetail'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /tickets/{id}/status:
+    patch:
+      summary: Change a ticket's status according to the workflow
+      operationId: changeTicketStatus
+      parameters:
+        - $ref: '#/components/parameters/TicketId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChangeStatusRequest'
+            examples:
+              start:
+                value: { status: IN_PROGRESS }
+      responses:
+        '200':
+          description: Transition accepted (or status unchanged); returns the current ticket
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TicketDetail'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /tickets/{id}/comments:
+    post:
+      summary: Add a comment to a ticket (allowed in every status)
+      operationId: addComment
+      parameters:
+        - $ref: '#/components/parameters/TicketId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateCommentRequest'
+      responses:
+        '201':
+          description: Comment added
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Comment'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '404':
+          $ref: '#/components/responses/NotFound'
+components:
+  parameters:
+    TicketId:
+      name: id
+      in: path
+      required: true
+      schema: { type: integer, format: int64, minimum: 1 }
+  responses:
+    ValidationError:
+      description: Input failed validation (including an unknown status or priority value)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          examples:
+            unknownStatus:
+              value:
+                timestamp: '2026-11-22T06:30:00Z'
+                status: 400
+                code: VALIDATION_ERROR
+                message: Request validation failed.
+                path: /api/v1/tickets/42/status
+                fieldErrors:
+                  - field: status
+                    message: "Unknown status 'DONE'. Valid values: OPEN, IN_PROGRESS, RESOLVED, CLOSED, CANCELLED."
+            blankTitle:
+              value:
+                timestamp: '2026-11-22T06:30:00Z'
+                status: 400
+                code: VALIDATION_ERROR
+                message: Request validation failed.
+                path: /api/v1/tickets
+                fieldErrors:
+                  - field: title
+                    message: "Title is required and must not be blank (maximum 150 characters)."
+    NotFound:
+      description: Ticket does not exist
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          examples:
+            missing:
+              value:
+                timestamp: '2026-11-22T06:30:00Z'
+                status: 404
+                code: TICKET_NOT_FOUND
+                message: "Ticket 42 was not found."
+                path: /api/v1/tickets/42
+                fieldErrors: []
+    Conflict:
+      description: >
+        Either the requested status transition is not allowed (INVALID_STATUS_TRANSITION) or the
+        ticket was changed by someone else since it was loaded (CONCURRENT_MODIFICATION).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          examples:
+            reopenClosed:
+              value:
+                timestamp: '2026-11-22T06:30:00Z'
+                status: 409
+                code: INVALID_STATUS_TRANSITION
+                message: "Cannot change status from CLOSED to OPEN. CLOSED is a final status."
+                path: /api/v1/tickets/42/status
+                fieldErrors: []
+                currentStatus: CLOSED
+                requestedStatus: OPEN
+                allowedNextStatuses: []
+            skipStep:
+              value:
+                timestamp: '2026-11-22T06:30:00Z'
+                status: 409
+                code: INVALID_STATUS_TRANSITION
+                message: "Cannot change status from OPEN to RESOLVED. Allowed next statuses: IN_PROGRESS, CANCELLED."
+                path: /api/v1/tickets/42/status
+                fieldErrors: []
+                currentStatus: OPEN
+                requestedStatus: RESOLVED
+                allowedNextStatuses: [IN_PROGRESS, CANCELLED]
+            staleVersion:
+              value:
+                timestamp: '2026-11-22T06:30:00Z'
+                status: 409
+                code: CONCURRENT_MODIFICATION
+                message: "This ticket was changed by someone else. Reload it and try again."
+                path: /api/v1/tickets/42
+                fieldErrors: []
+  schemas:
+    TicketStatus:
+      type: string
+      enum: [OPEN, IN_PROGRESS, RESOLVED, CLOSED, CANCELLED]
+    TicketPriority:
+      type: string
+      enum: [LOW, MEDIUM, HIGH, CRITICAL]
+    CreateTicketRequest:
+      type: object
+      required: [title, description]
+      description: Any `status` property sent is ignored; new tickets are always OPEN.
+      properties:
+        title: { type: string, minLength: 1, maxLength: 150 }
+        description: { type: string, minLength: 1, maxLength: 5000 }
+        priority:
+          $ref: '#/components/schemas/TicketPriority'
+    UpdateTicketRequest:
+      type: object
+      required: [title, description, priority, version]
+      properties:
+        title: { type: string, minLength: 1, maxLength: 150 }
+        description: { type: string, minLength: 1, maxLength: 5000 }
+        priority:
+          $ref: '#/components/schemas/TicketPriority'
+        assignee: { type: string, maxLength: 100, nullable: true, description: Null or blank clears the assignee }
+        status:
+          $ref: '#/components/schemas/TicketStatus'
+        version:
+          type: integer
+          format: int64
+          description: The version of the ticket the client loaded; a mismatch is rejected
+    ChangeStatusRequest:
+      type: object
+      required: [status]
+      properties:
+        status:
+          $ref: '#/components/schemas/TicketStatus'
+    CreateCommentRequest:
+      type: object
+      required: [author, text]
+      properties:
+        author: { type: string, minLength: 1, maxLength: 100 }
+        text: { type: string, minLength: 1, maxLength: 2000 }
+    TicketSummary:
+      type: object
+      required: [id, title, status, priority, createdAt]
+      properties:
+        id: { type: integer, format: int64 }
+        title: { type: string }
+        status:
+          $ref: '#/components/schemas/TicketStatus'
+        priority:
+          $ref: '#/components/schemas/TicketPriority'
+        assignee: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+    Comment:
+      type: object
+      required: [id, author, text, createdAt]
+      properties:
+        id: { type: integer, format: int64 }
+        author: { type: string }
+        text: { type: string }
+        createdAt: { type: string, format: date-time }
+    TicketDetail:
+      type: object
+      required: [id, title, description, status, priority, createdAt, updatedAt, version, allowedNextStatuses, comments]
+      properties:
+        id: { type: integer, format: int64 }
+        title: { type: string }
+        description: { type: string }
+        status:
+          $ref: '#/components/schemas/TicketStatus'
+        priority:
+          $ref: '#/components/schemas/TicketPriority'
+        assignee: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        version: { type: integer, format: int64 }
+        allowedNextStatuses:
+          type: array
+          description: Statuses this ticket may move to now. Empty for CLOSED and CANCELLED.
+          items:
+            $ref: '#/components/schemas/TicketStatus'
+        comments:
+          type: array
+          description: Oldest first
+          items:
+            $ref: '#/components/schemas/Comment'
+    TicketPage:
+      type: object
+      required: [content, page, size, totalElements, totalPages]
+      properties:
+        content:
+          type: array
+          items:
+            $ref: '#/components/schemas/TicketSummary'
+        page: { type: integer }
+        size: { type: integer }
+        totalElements: { type: integer, format: int64 }
+        totalPages: { type: integer }
+    FieldError:
+      type: object
+      required: [field, message]
+      properties:
+        field: { type: string }
+        message: { type: string }
+    ApiError:
+      type: object
+      required: [timestamp, status, code, message, path]
+      properties:
+        timestamp: { type: string, format: date-time }
+        status: { type: integer }
+        code:
+          type: string
+          enum: [VALIDATION_ERROR, TICKET_NOT_FOUND, INVALID_STATUS_TRANSITION, CONCURRENT_MODIFICATION, INTERNAL_ERROR, REQUEST_ERROR]
+        message: { type: string, description: Plain language, safe to show to users }
+        path: { type: string }
+        fieldErrors:
+          type: array
+          items:
+            $ref: '#/components/schemas/FieldError'
+        currentStatus:
+          $ref: '#/components/schemas/TicketStatus'
+        requestedStatus:
+          $ref: '#/components/schemas/TicketStatus'
+        allowedNextStatuses:
+          type: array
+          items:
+            $ref: '#/components/schemas/TicketStatus'

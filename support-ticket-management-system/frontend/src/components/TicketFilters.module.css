@@ -1,0 +1,21 @@
+.filters {
+  display: grid;
+  gap: 0 1rem;
+  margin-bottom: 1rem;
+}
+
+.filters :global(.field) {
+  margin-bottom: 0.75rem;
+}
+
+.filters :global(.btn) {
+  justify-self: start;
+  margin-bottom: 0.75rem;
+}
+
+@media (min-width: 640px) {
+  .filters {
+    grid-template-columns: 1fr 14rem auto;
+    align-items: end;
+  }
+}

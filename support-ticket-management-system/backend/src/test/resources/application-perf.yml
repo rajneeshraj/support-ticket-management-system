@@ -1,0 +1,6 @@
+spring:
+  datasource:
+    # Throw-away in-memory database for the performance smoke check; never touches ./data.
+    url: jdbc:h2:mem:perf;MODE=PostgreSQL;DB_CLOSE_DELAY=-1
+    username: sa
+    password: ""

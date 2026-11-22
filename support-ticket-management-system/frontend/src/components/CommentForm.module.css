@@ -1,0 +1,7 @@
+.form {
+  max-width: 40rem;
+}
+
+.form textarea {
+  min-height: 5rem;
+}
